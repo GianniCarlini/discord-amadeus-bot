@@ -1,6 +1,6 @@
 import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, UTC
+from typing import Dict, Any, List, Optional, Tuple
 
 import discord
 from discord import app_commands
@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 import aiohttp
 import pytz
 
-# Carga variables .env en local (en Railway usa Variables del proyecto)
 load_dotenv()
 
 # ===== Config Discord =====
@@ -30,10 +29,19 @@ TOKYO_CODES = os.getenv("TOKYO_CODES", "NRT,HND").split(",")
 OSAKA_CODES = os.getenv("OSAKA_CODES", "KIX,ITM").split(",")
 DAYS_AHEAD = int(os.getenv("DAYS_AHEAD", "60"))
 STAY_NIGHTS = int(os.getenv("STAY_NIGHTS", "14"))
-CURRENCY = os.getenv("CURRENCY", "USD")
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
 
-# Zona horaria Chile
+# Monedas: primaria (en la que consulta Amadeus) y secundaria para mostrar equivalencia
+PRIMARY_CURRENCY = os.getenv("CURRENCY", "USD")  # precio principal (p.ej. USD)
+SECOND_CURRENCY = os.getenv("SECOND_CURRENCY", "CLP")  # equivalencia a mostrar (p.ej. CLP)
+
+# Fechas fijas opcionales (YYYY-MM-DD). Si no están, usa DAYS_AHEAD/STAY_NIGHTS.
+DEPARTURE_DATE_ENV = os.getenv("DEPARTURE_DATE", "").strip()
+RETURN_DATE_ENV = os.getenv("RETURN_DATE", "").strip()
+
+# FX manual opcional
+FX_USDCLP = os.getenv("FX_USDCLP")
+
 TZ = pytz.timezone("America/Santiago")
 
 # ===== Discord Bot =====
@@ -54,19 +62,23 @@ class AmadeusClient:
 
     async def _ensure_token(self, session: aiohttp.ClientSession):
         """Obtiene/refresca el token OAuth2 si está ausente o expirado."""
-        if self._token and self._token_exp and datetime.utcnow() < self._token_exp:
+        if self._token and self._token_exp and datetime.now(UTC) < self._token_exp:
             return
         url = f"{self.host}/v1/security/oauth2/token"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         data = {
             "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "client_id": self.client_id or "",
+            "client_secret": self.client_secret or "",
         }
-        async with session.post(url, data=data) as r:
-            r.raise_for_status()
+        async with session.post(url, data=data, headers=headers) as r:
+            text = await r.text()
+            if r.status != 200:
+                print(f"[ERR] Token fail {r.status}: {text[:300]}")
+                raise RuntimeError(f"Amadeus token {r.status}")
             js = await r.json()
             self._token = js["access_token"]
-            self._token_exp = datetime.utcnow() + timedelta(
+            self._token_exp = datetime.now(UTC) + timedelta(
                 seconds=int(js.get("expires_in", 1800)) - 60
             )
 
@@ -116,18 +128,90 @@ class AmadeusClient:
 amadeus = AmadeusClient(AMADEUS_HOST, AMADEUS_CLIENT_ID, AMADEUS_CLIENT_SECRET)
 
 
+# ===== FX Converter =====
+class FXConverter:
+    def __init__(self):
+        self._cache: Dict[Tuple[str, str], Tuple[float, datetime]] = {}
+
+    async def get_rate(self, session: aiohttp.ClientSession, base: str, target: str) -> Optional[float]:
+        base = base.upper()
+        target = target.upper()
+        if base == target:
+            return 1.0
+
+        key = (base, target)
+        cached = self._cache.get(key)
+        now = datetime.now(UTC)
+        if cached:
+            rate, exp = cached
+            if now < exp:
+                return rate
+
+        if FX_USDCLP and base == "USD" and target == "CLP":
+            try:
+                rate = float(FX_USDCLP)
+                self._cache[key] = (rate, now + timedelta(hours=12))
+                return rate
+            except ValueError:
+                pass
+
+        url = f"https://api.exchangerate.host/latest?base={base}&symbols={target}"
+        try:
+            async with session.get(url, timeout=10) as r:
+                if r.status != 200:
+                    print(f"[WARN] FX {base}->{target} status={r.status}")
+                    return None
+                js = await r.json()
+                rate = float(js.get("rates", {}).get(target, 0))
+                if rate > 0:
+                    self._cache[key] = (rate, now + timedelta(hours=12))
+                    return rate
+                print(f"[WARN] FX {base}->{target} sin tasa válida")
+                return None
+        except Exception as e:
+            print(f"[WARN] FX error: {e}")
+            return None
+
+
+fx = FXConverter()
+
+
 # ===== Helpers de fechas y formato =====
-def compute_dates(days_ahead: int, stay_nights: int) -> (str, str):
+def parse_env_dates() -> Optional[Tuple[str, str]]:
+    if not DEPARTURE_DATE_ENV or not RETURN_DATE_ENV:
+        return None
+    try:
+        d1 = datetime.fromisoformat(DEPARTURE_DATE_ENV).date()
+        d2 = datetime.fromisoformat(RETURN_DATE_ENV).date()
+        if d1 >= d2:
+            print("[WARN] RETURN_DATE debe ser posterior a DEPARTURE_DATE; se ignorarán fechas fijas.")
+            return None
+        return d1.isoformat(), d2.isoformat()
+    except ValueError:
+        print("[WARN] Formato inválido en DEPARTURE_DATE/RETURN_DATE (usa YYYY-MM-DD).")
+        return None
+
+
+def compute_dates(days_ahead: int, stay_nights: int) -> Tuple[str, str]:
     today = datetime.now(TZ)
     dpt = (today + timedelta(days=days_ahead)).date()
     rtn = dpt + timedelta(days=stay_nights)
     return dpt.isoformat(), rtn.isoformat()
 
 
-def fmt_offer(offer: Dict[str, Any]) -> str:
+def format_usd(amount: float) -> str:
+    return f"{amount:,.2f} USD"
+
+
+def format_clp(amount: float) -> str:
+    return f"{int(round(amount)):,.0f}".replace(",", ".") + " CLP"
+
+
+def fmt_offer(offer: Dict[str, Any], second_currency: Optional[str], rate: Optional[float]) -> str:
     price = offer.get("price", {})
-    amount = price.get("grandTotal", "?")
-    currency = price.get("currency", CURRENCY)
+    amount = float(price.get("grandTotal", "0") or 0)
+    currency = (price.get("currency") or PRIMARY_CURRENCY).upper()
+
     itin = (offer.get("itineraries") or [{}])[0]
     dur = itin.get("duration", "")
     segs = itin.get("segments", [])
@@ -136,28 +220,53 @@ def fmt_offer(offer: Dict[str, Any]) -> str:
     dep = first.get("departure", {}).get("iataCode", "?")
     arr = last.get("arrival", {}).get("iataCode", "?")
     stops = max(0, len(segs) - 1)
-    return f"• {dep}→{arr} | {stops} escala(s) | {dur} | {amount} {currency}"
+
+    primary_str = f"{amount:,.2f} {currency}"
+    line = f"• {dep}→{arr} | {stops} escala(s) | {dur} | {primary_str}"
+
+    if second_currency and rate and amount > 0:
+        eq = amount * rate
+        if second_currency.upper() == "CLP":
+            line += f" (≈ {format_clp(eq)})"
+        else:
+            line += f" (≈ {eq:,.2f} {second_currency.upper()})"
+    return line
 
 
 def build_message(
-    title: str, offers: List[Dict[str, Any]], origin: str, dests: List[str], dep: str, ret: str
+    title: str,
+    offers: List[Dict[str, Any]],
+    origin: str,
+    dests: List[str],
+    dep: str,
+    ret: str,
+    second_currency: Optional[str],
+    rate: Optional[float],
 ) -> str:
     if not offers:
         return f"**{title}**\n_No se encontraron ofertas para {origin}→{','.join(dests)} ({dep} / {ret})._"
-    lines = [f"**{title}** _(salida {dep}, regreso {ret})_"]
+    header = f"**{title}** _(salida {dep}, regreso {ret})_"
+    lines = [header]
     for o in offers:
-        lines.append(fmt_offer(o))
+        lines.append(fmt_offer(o, second_currency, rate))
     return "\n".join(lines)
 
 
 # ===== Búsqueda agregada por ciudad (múltiples aeropuertos) =====
 async def fetch_cheapest_for_city_codes(dest_codes: List[str], title: str) -> str:
-    dep, ret = compute_dates(DAYS_AHEAD, STAY_NIGHTS)
+    env_dates = parse_env_dates()
+    if env_dates:
+        dep, ret = env_dates
+    else:
+        dep, ret = compute_dates(DAYS_AHEAD, STAY_NIGHTS)
+
     aggregate: List[Dict[str, Any]] = []
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = aiohttp.ClientTimeout(total=35)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for code in dest_codes:
+        rate: Optional[float] = None
+
+        for idx, code in enumerate(dest_codes):
             try:
                 offers = await amadeus.search_round_trip(
                     session,
@@ -165,13 +274,17 @@ async def fetch_cheapest_for_city_codes(dest_codes: List[str], title: str) -> st
                     destination=code,
                     departure_date=dep,
                     return_date=ret,
-                    currency=CURRENCY,
+                    currency=PRIMARY_CURRENCY,
                     market=MARKET,
                     max_results=MAX_RESULTS,
                 )
                 aggregate.extend(offers)
+
+                if rate is None and offers:
+                    offer_ccy = (offers[0].get("price", {}).get("currency") or PRIMARY_CURRENCY).upper()
+                    if SECOND_CURRENCY:
+                        rate = await fx.get_rate(session, offer_ccy, SECOND_CURRENCY.upper())
             except Exception as e:
-                # Log interno (no mostramos al usuario)
                 print(f"[WARN] Dest {code} error: {e}")
 
     def price_total(o):
@@ -182,7 +295,7 @@ async def fetch_cheapest_for_city_codes(dest_codes: List[str], title: str) -> st
 
     aggregate.sort(key=price_total)
     top = aggregate[:MAX_RESULTS]
-    return build_message(title, top, ORIGIN, dest_codes, dep, ret)
+    return build_message(title, top, ORIGIN, dest_codes, dep, ret, SECOND_CURRENCY, rate)
 
 
 # ===== Publicación de mensajes diarios =====
@@ -218,7 +331,6 @@ async def probar(interaction: discord.Interaction):
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user} (ID: {bot.user.id})")
 
-    # Programa tarea diaria a las 11:00 America/Santiago
     trigger = CronTrigger(hour=11, minute=0, timezone=TZ)
     for job in scheduler.get_jobs():
         scheduler.remove_job(job.id)
@@ -226,7 +338,6 @@ async def on_ready():
     if not scheduler.running:
         scheduler.start()
 
-    # Sincroniza slash commands (guild más rápido; global puede tardar minutos)
     try:
         if GUILD_ID:
             await tree.sync(guild=discord.Object(id=GUILD_ID))
@@ -241,6 +352,8 @@ async def on_ready():
 def main():
     if not TOKEN or CHANNEL_ID == 0:
         raise RuntimeError("Faltan DISCORD_TOKEN o DISCORD_CHANNEL_ID")
+    print(f"[DIAG] PRIMARY_CURRENCY={PRIMARY_CURRENCY}, SECOND_CURRENCY={SECOND_CURRENCY}, "
+          f"DEPARTURE_DATE={DEPARTURE_DATE_ENV or '(auto)'}, RETURN_DATE={RETURN_DATE_ENV or '(auto)'}")
     bot.run(TOKEN)
 
 
