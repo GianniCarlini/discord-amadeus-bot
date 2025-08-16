@@ -43,6 +43,10 @@ class Settings:
     depart_date_env: Optional[str] = field(default_factory=lambda: _env("DEPART_DATE") or _env("DEPARTURE_DATE"))
     return_date_env: Optional[str] = field(default_factory=lambda: _env("RETURN_DATE"))
 
+    # --- JAPÓN DOMÉSTICO (NUEVO) ---
+    hokkaido_codes: List[str] = field(default_factory=lambda: _split_csv("HOKKAIDO_CODES", "CTS,HKD"))
+    jp_dom_depart_env: Optional[str] = field(default_factory=lambda: _env("JP_DOMESTIC_DEPART_DATE") or _env("JP_DOMESTIC_DATE"))
+    jp_dom_return_env: Optional[str] = field(default_factory=lambda: _env("JP_DOMESTIC_RETURN_DATE"))
     # --- Otros ---
     timezone_str: str = field(default_factory=lambda: _env("TIMEZONE", "America/Santiago"))
     echo_verify: bool = field(default_factory=lambda: (_env("ECHO_VERIFY", "false") or "false").lower() in ("1", "true", "yes", "y"))
