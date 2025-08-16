@@ -3,12 +3,15 @@ from typing import Optional, List
 import os
 import pytz
 
+
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.getenv(name, default)
+
 
 def _split_csv(name: str, default: str = "") -> List[str]:
     raw = _env(name, default) or ""
     return [x.strip() for x in raw.split(",") if x.strip()]
+
 
 @dataclass
 class Settings:
@@ -42,7 +45,7 @@ class Settings:
 
     # --- Otros ---
     timezone_str: str = field(default_factory=lambda: _env("TIMEZONE", "America/Santiago"))
-    echo_verify: bool = field(default_factory=lambda: (_env("ECHO_VERIFY", "false") or "false").lower() in ("1","true","yes","y"))
+    echo_verify: bool = field(default_factory=lambda: (_env("ECHO_VERIFY", "false") or "false").lower() in ("1", "true", "yes", "y"))
 
     def __post_init__(self):
         missing = []
@@ -70,3 +73,8 @@ class Settings:
     @property
     def tz(self):
         return pytz.timezone(self.timezone_str)
+
+    # ---- Alias opcional para compatibilidad (antes se usaba 'departure_date_env') ----
+    @property
+    def departure_date_env(self) -> Optional[str]:
+        return self.depart_date_env

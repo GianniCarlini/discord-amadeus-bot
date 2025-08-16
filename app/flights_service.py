@@ -14,7 +14,7 @@ class FlightsService:
         self.fx = fx
 
     async def _fetch_city_codes(self, dest_codes: List[str], title: str) -> str:
-        env_dates = parse_env_dates(self.cfg.departure_date_env, self.cfg.return_date_env)
+        env_dates = parse_env_dates(self.cfg.depart_date_env, self.cfg.return_date_env)
         if env_dates:
             dep, ret = env_dates
         else:
