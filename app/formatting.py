@@ -3,7 +3,31 @@ from typing import Dict, Any, List, Optional
 def format_clp(amount: float) -> str:
     return f"{int(round(amount)):,.0f}".replace(",", ".") + " CLP"
 
-def fmt_offer(offer: Dict[str, Any], primary_currency: str, second_currency: Optional[str], rate: Optional[float]) -> str:
+def flight_search_link(
+    origin_iata: str,
+    dest_iata: str,
+    dep_date: str,
+    ret_date: str,
+    currency: str = "USD",
+    hl: str = "es-419",
+) -> str:
+    """
+    Deep link a Google Flights (round trip):
+    https://www.google.com/travel/flights?hl=<hl>&curr=<currency>#flt=ORIG.DEST.YYYY-MM-DD*DEST.ORIG.YYYY-MM-DD
+    """
+    o = (origin_iata or "").upper()
+    d = (dest_iata or "").upper()
+    legs = f"{o}.{d}.{dep_date}*{d}.{o}.{ret_date}"
+    return f"https://www.google.com/travel/flights?hl={hl}&curr={currency}#flt={legs}"
+
+def fmt_offer(
+    offer: Dict[str, Any],
+    primary_currency: str,
+    second_currency: Optional[str],
+    rate: Optional[float],
+    dep_date: str,
+    ret_date: str,
+) -> str:
     price = offer.get("price", {})
     amount = float(price.get("grandTotal", "0") or 0)
     currency = (price.get("currency") or primary_currency).upper()
@@ -18,6 +42,10 @@ def fmt_offer(offer: Dict[str, Any], primary_currency: str, second_currency: Opt
     stops = max(0, len(segs) - 1)
 
     primary_str = f"{amount:,.2f} {currency}"
+
+    # Link a Google Flights con esos IATA + fechas (usamos la moneda primaria como curr)
+    url = flight_search_link(dep, arr, dep_date, ret_date, currency=primary_currency)
+
     line = f"• {dep}→{arr} | {stops} escala(s) | {dur} | {primary_str}"
 
     if second_currency and rate and amount > 0:
@@ -26,6 +54,8 @@ def fmt_offer(offer: Dict[str, Any], primary_currency: str, second_currency: Opt
             line += f" (≈ {format_clp(eq)})"
         else:
             line += f" (≈ {eq:,.2f} {second_currency.upper()})"
+
+    line += f" | 🔗 <{url}>"
     return line
 
 def build_message(
@@ -43,5 +73,5 @@ def build_message(
         return f"**{title}**\n_No se encontraron ofertas para {origin}→{','.join(dests)} ({dep} / {ret})._"
     lines = [f"**{title}** _(salida {dep}, regreso {ret})_"]
     for o in offers:
-        lines.append(fmt_offer(o, primary_currency, second_currency, rate))
+        lines.append(fmt_offer(o, primary_currency, second_currency, rate, dep, ret))
     return "\n".join(lines)
