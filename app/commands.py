@@ -1,6 +1,8 @@
 import discord
 from discord import app_commands
 from datetime import datetime, timedelta
+from typing import Optional
+
 
 def register_commands(bot: discord.Client, cfg, flights_service):
     tree = bot.tree
@@ -20,6 +22,8 @@ def register_commands(bot: discord.Client, cfg, flights_service):
             f"SECOND_CURRENCY: {cfg.second_currency}\n"
             f"DEPARTURE_DATE: {getattr(cfg, 'depart_date_env', None) or '(auto)'}\n"
             f"RETURN_DATE: {cfg.return_date_env or '(auto)'}\n"
+            f"TOKYO_CODES: {','.join(cfg.tokyo_codes)}\n"
+            f"HOKKAIDO_CODES: {','.join(getattr(cfg, 'hokkaido_codes', []))}\n"
             f"JP_DOM_DEPART: {getattr(cfg, 'jp_dom_depart_env', None) or '(no set)'}\n"
             f"JP_DOM_RETURN: {getattr(cfg, 'jp_dom_return_env', None) or '(auto +1d)'}\n"
             f"CHANNEL_ID: {cfg.channel_id}\n"
@@ -27,30 +31,58 @@ def register_commands(bot: discord.Client, cfg, flights_service):
         )
         await interaction.response.send_message(f"```{msg}```", ephemeral=True)
 
-    @tree.command(name="hokkaido", description="Tokio ⇄ Sapporo/Hakodate (fecha fija desde variables de entorno)")
-    async def hokkaido(interaction: discord.Interaction):
-        dep = getattr(cfg, "jp_dom_depart_env", None)
-        ret = getattr(cfg, "jp_dom_return_env", None)
+    @tree.command(
+        name="hokkaido",
+        description="Tokio ⇄ Sapporo/Hakodate (puedes indicar fecha o usa variables de entorno)",
+    )
+    @app_commands.describe(
+        departure="Fecha de salida (YYYY-MM-DD)",
+        return_date="Fecha de regreso (YYYY-MM-DD, opcional; por defecto +1 día)",
+    )
+    async def hokkaido(
+        interaction: discord.Interaction,
+        departure: Optional[str] = None,
+        return_date: Optional[str] = None,
+    ):
+        dep_str = departure or getattr(cfg, "jp_dom_depart_env", None)
+        ret_str = return_date or getattr(cfg, "jp_dom_return_env", None)
 
-        if not dep:
+        if not dep_str:
             await interaction.response.send_message(
-                "❗ Configura `JP_DOMESTIC_DEPART_DATE` (YYYY-MM-DD) en las variables del servicio.",
+                "❗ Debes pasar `departure` (YYYY-MM-DD) o configurar `JP_DOMESTIC_DEPART_DATE`.",
                 ephemeral=True,
             )
             return
 
-        if not ret:
+        try:
+            d_dep = datetime.fromisoformat(dep_str).date()
+        except Exception:
+            await interaction.response.send_message("❗ `departure` inválida (usa YYYY-MM-DD).", ephemeral=True)
+            return
+
+        if ret_str:
             try:
-                d1 = datetime.fromisoformat(dep).date()
-                ret = (d1 + timedelta(days=1)).isoformat()
+                d_ret = datetime.fromisoformat(ret_str).date()
             except Exception:
-                await interaction.response.send_message("❗ `JP_DOMESTIC_DEPART_DATE` inválida (usa YYYY-MM-DD).", ephemeral=True)
+                await interaction.response.send_message("❗ `return_date` inválida (usa YYYY-MM-DD).", ephemeral=True)
                 return
+            if d_ret <= d_dep:
+                await interaction.response.send_message("❗ `return_date` debe ser posterior a `departure`.", ephemeral=True)
+                return
+        else:
+            d_ret = d_dep + timedelta(days=1)  # default
+
+        dep_iso, ret_iso = d_dep.isoformat(), d_ret.isoformat()
 
         await interaction.response.send_message("Enviando resultados al canal…", ephemeral=True)
-        title = "✈️ Tokio ⇄ Hokkaidō (CTS/HKD) — Fecha fija"
+
+        title = "✈️ Tokio ⇄ Hokkaidō (CTS/HKD) — Fecha seleccionada"
         msg = await flights_service.fetch_city_to_city_specific_dates(
-            cfg.tokyo_codes, cfg.hokkaido_codes, title, dep, ret
+            cfg.tokyo_codes,
+            getattr(cfg, "hokkaido_codes", ["CTS", "HKD"]),
+            title,
+            dep_iso,
+            ret_iso,
         )
 
         channel = bot.get_channel(cfg.channel_id)
