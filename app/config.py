@@ -47,7 +47,7 @@ class Settings:
     hokkaido_codes: List[str] = field(default_factory=lambda: _split_csv("HOKKAIDO_CODES", "CTS,HKD"))
     jp_dom_depart_env: Optional[str] = field(default_factory=lambda: _env("JP_DOMESTIC_DEPART_DATE") or _env("JP_DOMESTIC_DATE"))
     jp_dom_return_env: Optional[str] = field(default_factory=lambda: _env("JP_DOMESTIC_RETURN_DATE"))
-    sapporo_codes: List[str] = field(default_factory=lambda: _split_csv("SAPPORO_CODES", "CTS"))
+    okinawa_codes: List[str] = field(default_factory=lambda: _split_csv("OKINAWA_CODES", "OKA"))  # ← NUEVO
 
     # --- Otros ---
     timezone_str: str = field(default_factory=lambda: _env("TIMEZONE", "America/Santiago"))
@@ -80,7 +80,6 @@ class Settings:
     def tz(self):
         return pytz.timezone(self.timezone_str)
 
-    # Alias opcional (antes se usaba 'departure_date_env')
     @property
     def departure_date_env(self) -> Optional[str]:
         return self.depart_date_env

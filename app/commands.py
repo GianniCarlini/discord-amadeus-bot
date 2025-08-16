@@ -24,7 +24,7 @@ def register_commands(bot: discord.Client, cfg, flights_service):
             f"RETURN_DATE: {cfg.return_date_env or '(auto)'}\n"
             f"TOKYO_CODES: {','.join(cfg.tokyo_codes)}\n"
             f"HOKKAIDO_CODES: {','.join(getattr(cfg, 'hokkaido_codes', []))}\n"
-            f"SAPPORO_CODES: {','.join(getattr(cfg, 'sapporo_codes', []))}\n"
+            f"OKINAWA_CODES: {','.join(getattr(cfg, 'okinawa_codes', []))}\n"
             f"JP_DOM_DEPART: {getattr(cfg, 'jp_dom_depart_env', None) or '(no set)'}\n"
             f"JP_DOM_RETURN: {getattr(cfg, 'jp_dom_return_env', None) or '(auto +1d)'}\n"
             f"CHANNEL_ID: {cfg.channel_id}\n"
@@ -87,14 +87,14 @@ def register_commands(bot: discord.Client, cfg, flights_service):
         else: await interaction.followup.send("❌ No pude encontrar el canal configurado.", ephemeral=True)
 
     @tree.command(
-        name="sapporo",
-        description="Tokio ⇄ Sapporo (puedes indicar fecha o usa variables de entorno)",
+        name="okinawa",
+        description="Tokio ⇄ Okinawa (puedes indicar fecha o usa variables de entorno)",
     )
     @app_commands.describe(
         departure="Fecha de salida (YYYY-MM-DD)",
         return_date="Fecha de regreso (YYYY-MM-DD, opcional; por defecto +1 día)",
     )
-    async def sapporo(
+    async def okinawa(
         interaction: discord.Interaction,
         departure: Optional[str] = None,
         return_date: Optional[str] = None,
@@ -128,10 +128,10 @@ def register_commands(bot: discord.Client, cfg, flights_service):
             d_ret = d_dep + timedelta(days=1)
 
         await interaction.response.send_message("Enviando resultados al canal…", ephemeral=True)
-        title = "✈️ Tokio ⇄ Sapporo (CTS) — Fecha seleccionada"
+        title = "✈️ Tokio ⇄ Okinawa (OKA) — Fecha seleccionada"
         msg = await flights_service.fetch_city_to_city_specific_dates(
             cfg.tokyo_codes,
-            getattr(cfg, "sapporo_codes", ["CTS"]),
+            getattr(cfg, "okinawa_codes", ["OKA"]),
             title,
             d_dep.isoformat(),
             d_ret.isoformat(),
