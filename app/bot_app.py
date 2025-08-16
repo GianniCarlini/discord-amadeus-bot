@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from .config import Settings
 from .commands import register_commands
 
+
 def create_bot(cfg: Settings, flights_service):
     intents = discord.Intents.default()
     bot = commands.Bot(command_prefix="!", intents=intents)
@@ -23,11 +24,14 @@ def create_bot(cfg: Settings, flights_service):
         if not scheduler.running:
             scheduler.start()
 
-        # Slash commands
+        # ---- Slash commands: copiar globales al guild y sincronizar ----
         try:
             if cfg.guild_id:
-                await bot.tree.sync(guild=discord.Object(id=cfg.guild_id))
-                print("✅ Slash commands sincronizados en guild")
+                guild_obj = discord.Object(id=cfg.guild_id)
+                bot.tree.clear_commands(guild=guild_obj)
+                bot.tree.copy_global_to(guild=guild_obj)
+                await bot.tree.sync(guild=guild_obj)
+                print("✅ Slash commands sincronizados en guild (copiados desde global)")
             else:
                 await bot.tree.sync()
                 print("✅ Slash commands sincronizados globalmente (puede tardar unos minutos)")
