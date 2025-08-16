@@ -7,6 +7,7 @@ from .fx import FXConverter
 from .formatting import build_message
 from .dates import parse_env_dates, compute_dates
 
+
 class FlightsService:
     def __init__(self, cfg: Settings, amadeus: AmadeusClient, fx: FXConverter):
         self.cfg = cfg
@@ -14,7 +15,10 @@ class FlightsService:
         self.fx = fx
 
     async def _fetch_city_codes(self, dest_codes: List[str], title: str) -> str:
-        env_dates = parse_env_dates(self.cfg.depart_date_env, self.cfg.return_date_env)
+        dep_env = getattr(self.cfg, "depart_date_env", None)
+        ret_env = getattr(self.cfg, "return_date_env", None)
+        env_dates = parse_env_dates(dep_env, ret_env)
+
         if env_dates:
             dep, ret = env_dates
         else:
@@ -35,23 +39,24 @@ class FlightsService:
                         return_date=ret,
                         currency=self.cfg.primary_currency,
                         market=self.cfg.market,
-                        max_results=int(self.cfg.__dict__.get("max_results", 5)),
+                        max_results=self.cfg.max_results,
                     )
                     aggregate.extend(offers)
+
                     if rate is None and offers and self.cfg.second_currency:
                         offer_ccy = (offers[0].get("price", {}).get("currency") or self.cfg.primary_currency).upper()
                         rate = await self.fx.get_rate(session, offer_ccy, self.cfg.second_currency.upper())
                 except Exception as e:
                     print(f"[WARN] Dest {code} error: {e}")
 
-        def price_total(o):
+        def price_total(o: Dict[str, Any]) -> float:
             try:
                 return float(o["price"]["grandTotal"])
             except Exception:
                 return 9e9
 
         aggregate.sort(key=price_total)
-        top = aggregate[: int(self.cfg.__dict__.get("max_results", 5))]
+        top = aggregate[: self.cfg.max_results]
 
         return build_message(
             title=title,

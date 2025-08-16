@@ -17,7 +17,7 @@ def register_commands(bot: discord.Client, cfg, flights_service):
             f"SECRET_PRESENT: {bool(cfg.amadeus_client_secret)}\n"
             f"PRIMARY_CURRENCY: {cfg.primary_currency}\n"
             f"SECOND_CURRENCY: {cfg.second_currency}\n"
-            f"DEPARTURE_DATE: {cfg.depart_date_env or '(auto)'}\n"
+            f"DEPARTURE_DATE: {getattr(cfg, 'depart_date_env', None) or '(auto)'}\n"
             f"RETURN_DATE: {cfg.return_date_env or '(auto)'}\n"
             f"CHANNEL_ID: {cfg.channel_id}\n"
             f"GUILD_ID: {cfg.guild_id}\n"
