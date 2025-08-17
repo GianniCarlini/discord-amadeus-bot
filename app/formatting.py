@@ -8,17 +8,17 @@ def flight_search_link(
     dest_iata: str,
     dep_date: str,
     ret_date: str,
-    currency: str = "USD",
-    hl: str = "es-419",
+    tld: str = "com",   # cambia a "cl" si prefieres kayak.cl
 ) -> str:
     """
-    Deep link a Google Flights (round trip):
-    https://www.google.com/travel/flights?hl=<hl>&curr=<currency>#flt=ORIG.DEST.YYYY-MM-DD*DEST.ORIG.YYYY-MM-DD
+    Deep link a Kayak (round trip), ordenado por precio ascendente:
+    https://www.kayak.<tld>/flights/ORIG-DEST/YYYY-MM-DD/YYYY-MM-DD?sort=price_a
     """
     o = (origin_iata or "").upper()
     d = (dest_iata or "").upper()
-    legs = f"{o}.{d}.{dep_date}*{d}.{o}.{ret_date}"
-    return f"https://www.google.com/travel/flights?hl={hl}&curr={currency}#flt={legs}"
+    if not o or not d or o == "?" or d == "?":
+        return ""
+    return f"https://www.kayak.{tld}/flights/{o}-{d}/{dep_date}/{ret_date}?sort=price_a"
 
 def fmt_offer(
     offer: Dict[str, Any],
@@ -42,12 +42,9 @@ def fmt_offer(
     stops = max(0, len(segs) - 1)
 
     primary_str = f"{amount:,.2f} {currency}"
-
-    # Link a Google Flights con esos IATA + fechas (usamos la moneda primaria como curr)
-    url = flight_search_link(dep, arr, dep_date, ret_date, currency=primary_currency)
+    url = flight_search_link(dep, arr, dep_date=dep_date, ret_date=ret_date)
 
     line = f"• {dep}→{arr} | {stops} escala(s) | {dur} | {primary_str}"
-
     if second_currency and rate and amount > 0:
         eq = amount * rate
         if second_currency.upper() == "CLP":
@@ -55,7 +52,9 @@ def fmt_offer(
         else:
             line += f" (≈ {eq:,.2f} {second_currency.upper()})"
 
-    line += f" | 🔗 <{url}>"
+    if url:
+        # En ángulos para que sea clickeable sin unfurl gigante
+        line += f" | 🔗 <{url}>"
     return line
 
 def build_message(
